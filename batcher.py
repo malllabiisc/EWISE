@@ -19,7 +19,7 @@ def batcher(file_input, batch_size):
             'pos': sents['pos']
             })
         except Exception as e:
-            print e
+            print(e)
 
     buckets = [[w for w in list_of_dict if w['original'].shape[0] == num] for num in set(i['original'].shape[0] for i in list_of_dict)]
     
@@ -30,7 +30,7 @@ def batcher(file_input, batch_size):
     final_stem_list = []
     final_pos_list = []
     for ele in buckets: # ele is a list of json
-        temp_ele = [ele[i:i + batch_size] for i in xrange(0, len(ele), batch_size)]
+        temp_ele = [ele[i:i + batch_size] for i in range(0, len(ele), batch_size)]
         for elem in temp_ele:
             ip_arr2d = np.array([elems['original'] for elems in elem])
             op_arr2d = np.array([elems['annotated'] for elems in elem])
@@ -51,4 +51,4 @@ def batcher(file_input, batch_size):
             final_stem_list.append(temp_stem_list)
             final_pos_list.append(temp_pos_list)
 
-    return zip(final_ip_list, final_op_list, final_offset_list, final_doc_offset_list, final_stem_list, final_pos_list)
+    return list(zip(final_ip_list, final_op_list, final_offset_list, final_doc_offset_list, final_stem_list, final_pos_list))

@@ -3,7 +3,6 @@ import sys
 import os
 from os import path
 import time 
-from itertools import ifilter
 import argparse
 import json
 import numpy as np
@@ -12,7 +11,6 @@ import pickle
 import random
 import subprocess
 import signal
-from sklearn.preprocessing import Imputer
 
 import torch
 from torch.autograd import Variable
@@ -28,7 +26,7 @@ from nltk.corpus import wordnet as wn
 pos_dict = {'NOUN':'n', 'PROPN':'n', 'VERB':'v', 'AUX':'v', 'ADJ':'a', 'ADV':'r'}
 
 parser = argparse.ArgumentParser(description='Train/Test WSD')
-parser.add_argument('--seed', type=int, default=1,
+parser.add_argument('--seed', type=int, default=67,
                     help='seed for numpy')
 parser.add_argument('--train_ratio', type=float, default=1.0,
                     help='ratio of training data to use')
@@ -74,11 +72,15 @@ parser.add_argument('--val', type=str,  default='semeval2007',
                     help='val file name')
 parser.add_argument('--test_file', type=str,  default='',
                     help='custom test file name')
+parser.add_argument('--weighted_loss', action='store_true',
+                    help='Whether to use a weighted loss function ')
 
 def init_random(seed):
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     random.seed(args.seed)
+    if args.cuda:
+        torch.cuda.manual_seed_all(args.seed)
 
 def pred_idx_to_key(pred_idx):
     if pred_idx in o_id_to_o_token:
@@ -131,8 +133,10 @@ def predict_on_batch(batch, output, n_input_tokens, i_id_to_candidate_wn_o_id, i
                 file_out.write('{} {}\n'.format(pred_tag, pred_key))
 
 def evaluate_output(gold_file_prefix, out_file):
-    eval_cmd = ['java','-cp', os.getcwd(), 'Scorer', gold_file_prefix +'.gold.key.txt', out_file]
+    eval_cmd = ['java', 'Scorer', gold_file_prefix +'.gold.key.txt', out_file]
+    #print (eval_cmd)
     output = subprocess.Popen(eval_cmd, stdout=subprocess.PIPE ).communicate()[0]
+    output = str(output, 'utf-8')
     output = output.splitlines()
     p,r,f1 =  [float(output[i].split('=')[-1].strip()[:-1]) for i in range(3)]
     return p, r, f1
@@ -143,7 +147,7 @@ def train_test(model, batches, n_output_tokens, n_output_train_tokens, n_input_t
                 test_pred_filename="", gold_file_prefix="", test=False):
     if test:
         model.eval()
-        batch_order = range(len(batches))
+        batch_order = list(range(len(batches)))
         file_pred = open(test_pred_filename, 'w')
     else:
         model.train()
@@ -181,7 +185,7 @@ def train_test(model, batches, n_output_tokens, n_output_train_tokens, n_input_t
             loss = criterion(output_masked, y_masked)
 
             loss.backward()
-            torch.nn.utils.clip_grad_norm(model.parameters(), args.clip)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             optimizer.step()
             total_loss += loss.data * bsz
             total_size += bsz
@@ -189,12 +193,12 @@ def train_test(model, batches, n_output_tokens, n_output_train_tokens, n_input_t
             predict_on_batch(batches[batch_idx], output, n_input_tokens, i_id_to_candidate_wn_o_id, i_id_to_candidate_train_o_id, file_pred)
 
         if i % args.log_interval == 0 and i > 0:
-            cur_loss = total_loss[0] / total_size
+            cur_loss = total_loss.item() / total_size
             elapsed = time.time() - start_time
-            print('| epoch {:3d} | {:5d}/{:5d} batches | lr {:02.2f} | ms/batch {:5.2f} | '
+            print(('| epoch {:3d} | {:5d}/{:5d} batches | lr {:02.2f} | ms/batch {:5.2f} | '
                     'loss {:5.2f} | ppl {:8.2f}'.format(
                 epoch, i, len(batches), lr,
-                elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
+                elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss))))
             total_loss = 0
             total_size = 0
             start_time = time.time()
@@ -215,13 +219,13 @@ d = args.input_directory
 bsz = args.batch_size
 
 #Read input files
-print ('Reading training and evaluation files from {}'.format(d))
-i_id_to_i_token = pickle.load(open(path.join(d, 'i_id_to_i_token.pickle')))
-o_id_to_o_token = pickle.load(open(path.join(d, 'o_id_to_o_token.pickle')))
-o_id_remainingWordNet_to_o_token = pickle.load(open(path.join(d, 'o_id_remainingWordNet_to_o_token.pickle')))
-i_id_to_candidate_wn_o_id = pickle.load(open(path.join(d, 'i_id_to_candidate_wn_o_id.pickle')))
-i_id_to_candidate_train_o_id = pickle.load(open(path.join(d, 'i_id_to_candidate_train_o_id.pickle')))
-i_id_embedding = pickle.load(open(path.join(d, 'i_id_embedding_glove.pickle')))
+print(('Reading training and evaluation files from {}'.format(d)))
+i_id_to_i_token = pickle.load(open(path.join(d, 'i_id_to_i_token.p'), 'rb'))
+o_id_to_o_token = pickle.load(open(path.join(d, 'o_id_to_o_token.p'), 'rb'))
+o_id_remainingWordNet_to_o_token = pickle.load(open(path.join(d, 'o_id_remainingWordNet_to_o_token.p'), 'rb'))
+i_id_to_candidate_wn_o_id = pickle.load(open(path.join(d, 'i_id_to_candidate_wn_o_id.p'), 'rb'))
+i_id_to_candidate_train_o_id = pickle.load(open(path.join(d, 'i_id_to_candidate_train_o_id.p'), 'rb'))
+i_id_embedding = pickle.load(open(path.join(d, 'i_id_embedding_glove.p'), 'rb'))
 
 if args.output_embedding != "":
     if args.output_embedding.split('-')[0] == 'custom':
@@ -230,16 +234,6 @@ if args.output_embedding != "":
     elif args.output_embedding.split('-')[0] == 'customnpz':
         fname = args.output_embedding.split('-')[1]
         o_id_embedding = np.load(path.join(d, fname))['embeddings']
-    elif args.output_embedding.split('-')[0] == 'customimpnpz':
-        fname = args.output_embedding.split('-')[1]
-        o_id_embedding = np.load(path.join(d, fname))['embeddings']
-        imp = Imputer(missing_values='NaN', strategy='mean', axis=0)
-        o_id_embedding = imp.fit_transform(o_id_embedding)        
-    elif args.output_embedding.split('-')[0] == 'customimp':
-        fname = args.output_embedding.split('-')[1]
-        o_id_embedding = pickle.load(open(path.join(d, fname)))
-        imp = Imputer(missing_values='NaN', strategy='mean', axis=0)
-        o_id_embedding = imp.fit_transform(o_id_embedding)        
 
 train_batches = batcher(path.join(d, '{}_indexed.json'.format(args.train)), bsz)
 if args.train_ratio < 1.0:
@@ -247,7 +241,7 @@ if args.train_ratio < 1.0:
     len_train = len(train_batches)
     updated_len = int(args.train_ratio * len_train)
     train_batches = train_batches[:updated_len]
-    print ('Reducing training batches count from {} to {}'.format(len_train, len(train_batches)))
+    print(('Reducing training batches count from {} to {}'.format(len_train, len(train_batches))))
 
 val_batches = batcher(path.join(d, '{}_indexed.json'.format(args.val)), bsz)
 test_batches = {}
@@ -276,37 +270,40 @@ if args.output_embedding != "":
 else:
     kwargs['n_output_emb'] =  args.output_embedding_size
     kwargs['n_output_tokens'] = n_output_tokens - n_input_tokens + 1
-print ('kwargs', kwargs)
+print(('kwargs', kwargs))
 
-weights = np.zeros(n_output_tokens-n_input_tokens+1)
-weights[n_output_train_tokens-n_input_tokens:] = 0
-_, _, lemma_freq = mfs.build_mfs(train_batches, use_stem=True, return_lemma_freq=True)
-for y in lemma_freq:
-     weights[y-n_input_tokens] = 1.0/lemma_freq[y]
+if args.weighted_loss:
+    weights = np.zeros(n_output_tokens-n_input_tokens+1)
+    weights[n_output_train_tokens-n_input_tokens:] = 0
+    _, _, lemma_freq = mfs.build_mfs(train_batches, use_stem=True, return_lemma_freq=True)
+    for y in lemma_freq:
+         weights[y-n_input_tokens] = 1.0/lemma_freq[y]
 
-min_weight = np.min(weights[:n_output_train_tokens-n_input_tokens])
-weights = np.clip(weights, None, min_weight*100.0)
-sum_weight = np.sum(weights[:n_output_train_tokens-n_input_tokens])
-print (min_weight, sum_weight)
-weights = weights/sum_weight
+    min_weight = np.min(weights[:n_output_train_tokens-n_input_tokens])
+    weights = np.clip(weights, None, min_weight*100.0)
+    sum_weight = np.sum(weights[:n_output_train_tokens-n_input_tokens])
+    print (min_weight, sum_weight)
+    weights = weights/sum_weight
 
-weights = weights[:n_output_train_tokens-n_input_tokens]
-weights = torch.FloatTensor(weights)
-if args.cuda:
-    weights = weights.cuda(args.gpuid)
-criterion = nn.CrossEntropyLoss(weight=weights)
+    weights = weights[:n_output_train_tokens-n_input_tokens]
+    weights = torch.FloatTensor(weights)
+    if args.cuda:
+        weights = weights.cuda(args.gpuid)
+    criterion = nn.CrossEntropyLoss(weight=weights)
+else:
+    criterion = nn.CrossEntropyLoss()
 
 model = WSD_BiLSTM(kwargs)
 #load if model is provided
 if args.pretrained != '':
-    print ("Loading model dict from {}".format(args.pretrained))
+    print(("Loading model dict from {}".format(args.pretrained)))
     model.load_state_dict(torch.load(args.pretrained))
 
 if args.cuda:
         model = model.cuda(args.gpuid)
 print (model)
 
-parameters = ifilter(lambda p: p.requires_grad, model.parameters())
+parameters = [p for p in model.parameters() if p.requires_grad]
 lr = args.lr
 optimizer = optim.Adam(parameters, lr=lr)
 
@@ -314,17 +311,17 @@ def display_results():
     val_p, val_r, val_f1 = train_test(model, val_batches, n_output_tokens, n_output_train_tokens, n_input_tokens,
                     i_id_to_candidate_wn_o_id, i_id_to_candidate_train_o_id,
                     test_pred_filename=args.save+'_' + args.val + '_pred.key', gold_file_prefix=path.join(d, args.val), test=True)
-    print('val P {:5.4f} | R {:5.4f} | F1 {:5.4f}'.format(val_p, val_r, val_f1))
+    print(('val P {:5.4f} | R {:5.4f} | F1 {:5.4f}'.format(val_p, val_r, val_f1)))
     for t in test_files:
         test_p, test_r, test_f1 = train_test(model, test_batches[t], n_output_tokens, n_output_train_tokens, n_input_tokens,
                         i_id_to_candidate_wn_o_id, i_id_to_candidate_train_o_id,
                         test_pred_filename=args.save+ '_' + t + '_pred.key', gold_file_prefix=path.join(d, t), test=True)
-        print('{:15} | test P {:5.4f} | R {:5.4f} | F1 {:5.4f}'.format(t, test_p, test_r, test_f1))
+        print(('{:15} | test P {:5.4f} | R {:5.4f} | F1 {:5.4f}'.format(t, test_p, test_r, test_f1)))
     return val_p, val_r, val_f1
 
 def display_exit(signal, frame):
     for epoch, lr, val_f1 in stats:
-        print('E {:3d} |  val F1 {:5.4f}'.format(epoch, val_f1))
+        print(('E {:3d} |  val F1 {:5.4f}'.format(epoch, val_f1)))
     model.load_state_dict(torch.load(args.save))
     display_results()
     sys.exit(0)
@@ -343,16 +340,16 @@ for epoch in range(epochs):
     train_test(model, train_batches, n_output_tokens, n_output_train_tokens, n_input_tokens,
                     i_id_to_candidate_wn_o_id, i_id_to_candidate_train_o_id,
                     optimizer=optimizer, lr=lr, criterion=criterion, epoch=epoch)
-    print('-'*80)
-    print('End of epoch {}'.format(epoch))
+    print(('-'*80))
+    print(('End of epoch {}'.format(epoch)))
     val_p, val_r, val_f1 = display_results()
-    print('-'*80)
+    print(('-'*80))
 
     if not best_sel_metric or val_f1 > best_sel_metric:
         best_sel_metric = val_f1
         best_model = epoch
         torch.save(model.state_dict(), args.save)
-    print ('Best epoch {} Best metric {}'.format(best_model, best_sel_metric))
+    print(('Best epoch {} Best metric {}'.format(best_model, best_sel_metric)))
     stats.append((epoch, lr, val_f1))
 
 display_exit(None, None)
