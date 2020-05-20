@@ -25,7 +25,7 @@ The code was written with, or depends on:
       python -m nltk.downloader wordnet
       python -m spacy download en
       ```         
-1. Fetch data and pre-process. This will create pre-processed files in data folder.
+1. Fetch data and pre-process. This will create pre-processed files in data folder. (In case there is an issue handling large files, processed input word embeddings ```i_id_embedding_glove.p``` are also provided)
       ```bash
       bash fetch_data.sh  
       bash preprocess.sh data
@@ -54,6 +54,8 @@ A. Pre-trained conve embeddings: ```o_id_embedding_conve_embeddings.npz```
 B. Pre-trained model: ```model.pt.gz``` (F1 score on ALL dataset: 72.1)
 
 C. Pre-trained ConvE model: ```WN18RR_conve_0.2_0.3__defn.model.gz```
+
+D. Processed input word embeddings: ```i_id_embedding_glove.p``` (Needed only if there are issues handling large files during preprocessing)
 
 
 An earlier version contained some code for weighted cross entropy loss (now enabled only by the ```--weighted_loss``` flag). The scheme wasn't really helpful and is not recommended. However, a pre-trained model for the same is shared: ```model_weighted.pt.gz``` (F1 score on ALL dataset: 72.1)
