@@ -1,6 +1,6 @@
 nltk==3.4.5
 numpy
 tqdm
-torch==1.4.0
+torch==2.2.0
 sklearn
 -r conve/requirements.txt
